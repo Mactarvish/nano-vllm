@@ -40,7 +40,7 @@ class BlockManager:
         h.update(np.array(token_ids).tobytes())
         return h.intdigest()
 
-    def _allocate_block(self, block_id: int) -> Block:
+    def _allocate_block(self, block_id: int) -> Block: # 并没有任何内存操作（reset token_ids除外），只不过是维护free和used两个容器的状态而已
         block = self.blocks[block_id]
         assert block.ref_count == 0
         block.reset()
@@ -68,7 +68,7 @@ class BlockManager:
                 cache_miss = True
             if cache_miss:
                 block_id = self.free_block_ids[0]
-                block = self._allocate_block(block_id)
+                block = self._allocate_block(block_id) # 懒操作
             else:
                 seq.num_cached_tokens += self.block_size
                 if block_id in self.used_block_ids:
@@ -91,7 +91,7 @@ class BlockManager:
         seq.block_table.clear()
 
     def can_append(self, seq: Sequence) -> bool:
-        return len(self.free_block_ids) >= (len(seq) % self.block_size == 1)
+        return len(self.free_block_ids) >= (len(seq) % self.block_size == 1) # seq越来越长，每次递增1 每次长度恰好是block_size的整数倍+1时，表示终于占满了现有空间了，需要新分配一个块 这个地方有点绕 可以追加是常态，极其偶尔才不可
 
     def may_append(self, seq: Sequence):
         block_table = seq.block_table
@@ -101,7 +101,7 @@ class BlockManager:
             block_id = self.free_block_ids[0]
             self._allocate_block(block_id)
             block_table.append(block_id)
-        elif len(seq) % self.block_size == 0:
+        elif len(seq) % self.block_size == 0: # 刚好填满一整个块，这个块成熟了，可以贴封条了，计算其与前序的hash，用seq的token_ids作为它的token_ids
             assert last_block.hash == -1
             token_ids = seq.block(seq.num_blocks-1)
             prefix = self.blocks[block_table[-2]].hash if len(block_table) > 1 else -1

@@ -67,7 +67,7 @@ class LLMEngine:
         if not isinstance(sampling_params, list):
             sampling_params = [sampling_params] * len(prompts)
         for prompt, sp in zip(prompts, sampling_params):
-            self.add_request(prompt, sp)
+            self.add_request(prompt, sp) # 添加请求 让这个序列在等待队列中等着
         outputs = {}
         prefill_throughput = decode_throughput = 0.
         while not self.is_finished():

@@ -33,11 +33,11 @@ class Scheduler:
             num_seqs += 1
             self.block_manager.allocate(seq)
             num_batched_tokens += len(seq) - seq.num_cached_tokens
-            seq.status = SequenceStatus.RUNNING
+            seq.status = SequenceStatus.RUNNING # 规划器有个waiting 每个序列也有一个自己的状态包括waiting
             self.waiting.popleft()
             self.running.append(seq)
             scheduled_seqs.append(seq)
-        if scheduled_seqs:
+        if scheduled_seqs: # 安排上新的序列了，那么当前就是prefill阶段
             return scheduled_seqs, True
 
         # decode
@@ -54,7 +54,7 @@ class Scheduler:
                 self.block_manager.may_append(seq)
                 scheduled_seqs.append(seq)
         assert scheduled_seqs
-        self.running.extendleft(reversed(scheduled_seqs))
+        self.running.extendleft(reversed(scheduled_seqs)) # seq刚从running里弹出来又装回去了
         return scheduled_seqs, False
 
     def preempt(self, seq: Sequence):
@@ -65,7 +65,7 @@ class Scheduler:
     def postprocess(self, seqs: list[Sequence], token_ids: list[int]) -> list[bool]:
         for seq, token_id in zip(seqs, token_ids):
             seq.append_token(token_id)
-            if (not seq.ignore_eos and token_id == self.eos) or seq.num_completion_tokens == seq.max_tokens:
+            if (not seq.ignore_eos and token_id == self.eos) or seq.num_completion_tokens == seq.max_tokens: # 遇到eos或者达到最大长度
                 seq.status = SequenceStatus.FINISHED
                 self.block_manager.deallocate(seq)
                 self.running.remove(seq)

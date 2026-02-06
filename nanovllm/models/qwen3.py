@@ -23,7 +23,7 @@ class Qwen3Attention(nn.Module):
         rms_norm_eps: float = 1e-06,
         qkv_bias: bool = False,
         rope_theta: float = 10000,
-        rope_scaling: tuple | None = None,
+        rope_scaling: dict | None = None,
     ) -> None:
         super().__init__()
         tp_size = dist.get_world_size()
@@ -110,7 +110,7 @@ class Qwen3MLP(nn.Module):
         self.act_fn = SiluAndMul()
 
     def forward(self, x):
-        gate_up = self.gate_up_proj(x)
+        gate_up = self.gate_up_proj(x) # 门控线性层
         x = self.act_fn(gate_up)
         x = self.down_proj(x)
         return x
@@ -151,7 +151,7 @@ class Qwen3DecoderLayer(nn.Module):
         if residual is None:
             hidden_states, residual = self.input_layernorm(hidden_states), hidden_states
         else:
-            hidden_states, residual = self.input_layernorm(hidden_states, residual)
+            hidden_states, residual = self.input_layernorm(hidden_states, residual) # hidden_states和residual相加作为新的residual
         hidden_states = self.self_attn(positions, hidden_states)
         hidden_states, residual = self.post_attention_layernorm(hidden_states, residual)
         hidden_states = self.mlp(hidden_states)

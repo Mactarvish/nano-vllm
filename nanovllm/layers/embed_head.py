@@ -6,7 +6,7 @@ import torch.distributed as dist
 from nanovllm.utils.context import get_context
 
 
-class VocabParallelEmbedding(nn.Module):
+class VocabParallelEmbedding(nn.Module): # 张量并行词表嵌入
 
     def __init__(
         self,
@@ -33,12 +33,12 @@ class VocabParallelEmbedding(nn.Module):
 
     def forward(self, x: torch.Tensor):
         if self.tp_size > 1:
-            mask = (x >= self.vocab_start_idx) & (x < self.vocab_end_idx)
-            x = mask * (x - self.vocab_start_idx)
+            mask = (x >= self.vocab_start_idx) & (x < self.vocab_end_idx) # 创建掩码：判断哪些 token ID 属于当前 GPU 的职责范围
+            x = mask * (x - self.vocab_start_idx) # 调整索引：将 token ID 转换为本地分片的索引（减去 vocab_start_idx）
         y = F.embedding(x, self.weight)
         if self.tp_size > 1:
-            y = mask.unsqueeze(1) * y
-            dist.all_reduce(y)
+            y = mask.unsqueeze(1) * y # 掩码处理：只保留属于当前 GPU 的嵌入结果，其他置零
+            dist.all_reduce(y) # All-Reduce：求和 聚合所有 GPU 的结果，得到完整的嵌入向量
         return y
 
 
@@ -58,9 +58,9 @@ class ParallelLMHead(VocabParallelEmbedding):
         if context.is_prefill:
             last_indices = context.cu_seqlens_q[1:] - 1
             x = x[last_indices].contiguous()
-        logits = F.linear(x, self.weight)
+        logits = F.linear(x, self.weight) # 同VocabParallelEmbedding，每个GPU计算自己负责的词汇表分片的 logits
         if self.tp_size > 1:
             all_logits = [torch.empty_like(logits) for _ in range(self.tp_size)] if self.tp_rank == 0 else None
-            dist.gather(logits, all_logits, 0)
+            dist.gather(logits, all_logits, 0) # 拼接
             logits = torch.cat(all_logits, -1) if self.tp_rank == 0 else None
         return logits

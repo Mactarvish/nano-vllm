@@ -32,7 +32,7 @@ class ModelRunner:
         load_model(self.model, config.model)
         self.sampler = Sampler()
         self.warmup_model()
-        self.allocate_kv_cache()
+        self.allocate_kv_cache() # 分配一个连续的大tensor来存储kv cache
         if not self.enforce_eager:
             self.capture_cudagraph()
         torch.set_default_device("cpu")
@@ -107,13 +107,13 @@ class ModelRunner:
         num_kv_heads = hf_config.num_key_value_heads // self.world_size
         head_dim = getattr(hf_config, "head_dim", hf_config.hidden_size // hf_config.num_attention_heads)
         block_bytes = 2 * hf_config.num_hidden_layers * self.block_size * num_kv_heads * head_dim * hf_config.torch_dtype.itemsize
-        config.num_kvcache_blocks = int(total * config.gpu_memory_utilization - used - peak + current) // block_bytes
+        config.num_kvcache_blocks = int(total * config.gpu_memory_utilization - used - peak + current) // block_bytes # 根据当前显存计算可用的kv cache块数
         assert config.num_kvcache_blocks > 0
         self.kv_cache = torch.empty(2, hf_config.num_hidden_layers, config.num_kvcache_blocks, self.block_size, num_kv_heads, head_dim)
         layer_id = 0
         for module in self.model.modules():
             if hasattr(module, "k_cache") and hasattr(module, "v_cache"):
-                module.k_cache = self.kv_cache[0, layer_id]
+                module.k_cache = self.kv_cache[0, layer_id] # 给attention层绑定kv cache
                 module.v_cache = self.kv_cache[1, layer_id]
                 layer_id += 1
 
@@ -126,7 +126,7 @@ class ModelRunner:
     def prepare_prefill(self, seqs: list[Sequence]):
         input_ids = []
         positions = []
-        cu_seqlens_q = [0]
+        cu_seqlens_q = [0] # cumulative sequence length for query
         cu_seqlens_k = [0]
         max_seqlen_q = 0
         max_seqlen_k = 0
@@ -134,8 +134,8 @@ class ModelRunner:
         block_tables = None
         for seq in seqs:
             seqlen = len(seq)
-            input_ids.extend(seq[seq.num_cached_tokens:])
-            positions.extend(list(range(seq.num_cached_tokens, seqlen)))
+            input_ids.extend(seq[seq.num_cached_tokens:]) # !!! 整个项目的核心在这一行：从已经缓存的token开始算，剩余的token作为input_ids
+            positions.extend(list(range(seq.num_cached_tokens, seqlen))) # 上述token在seq中的索引
             seqlen_q = seqlen - seq.num_cached_tokens
             seqlen_k = seqlen
             cu_seqlens_q.append(cu_seqlens_q[-1] + seqlen_q)
@@ -189,7 +189,7 @@ class ModelRunner:
     @torch.inference_mode()
     def run_model(self, input_ids: torch.Tensor, positions: torch.Tensor, is_prefill: bool):
         if is_prefill or self.enforce_eager or input_ids.size(0) > 512:
-            return self.model.compute_logits(self.model(input_ids, positions))
+            return self.model.compute_logits(self.model(input_ids, positions)) # ! prefill阶段除了tp以外，没有任何特别之处 目前位置content和block还完全没有发挥作用
         else:
             bs = input_ids.size(0)
             context = get_context()
@@ -206,7 +206,7 @@ class ModelRunner:
             return self.model.compute_logits(graph_vars["outputs"][:bs])
 
     def run(self, seqs: list[Sequence], is_prefill: bool) -> list[int]:
-        input_ids, positions = self.prepare_prefill(seqs) if is_prefill else self.prepare_decode(seqs)
+        input_ids, positions = self.prepare_prefill(seqs) if is_prefill else self.prepare_decode(seqs) # 配置上下文，生成点位索引
         temperatures = self.prepare_sample(seqs) if self.rank == 0 else None
         logits = self.run_model(input_ids, positions, is_prefill)
         token_ids = self.sampler(logits, temperatures).tolist() if self.rank == 0 else None
@@ -218,12 +218,12 @@ class ModelRunner:
         config = self.config
         hf_config = config.hf_config
         max_bs = min(self.config.max_num_seqs, 512)
-        max_num_blocks = (config.max_model_len + self.block_size - 1) // self.block_size
+        max_num_blocks = (config.max_model_len + self.block_size - 1) // self.block_size # 向上取整
         input_ids = torch.zeros(max_bs, dtype=torch.int64)
         positions = torch.zeros(max_bs, dtype=torch.int64)
         slot_mapping = torch.zeros(max_bs, dtype=torch.int32)
-        context_lens = torch.zeros(max_bs, dtype=torch.int32)
-        block_tables = torch.zeros(max_bs, max_num_blocks, dtype=torch.int32)
+        context_lens = torch.zeros(max_bs, dtype=torch.int32) # 存储每个seq的上下文长度
+        block_tables = torch.zeros(max_bs, max_num_blocks, dtype=torch.int32) # 存储每个seq的block table
         outputs = torch.zeros(max_bs, hf_config.hidden_size)
         self.graph_bs = [1, 2, 4, 8] + list(range(16, max_bs + 1, 16))
         self.graphs = {}

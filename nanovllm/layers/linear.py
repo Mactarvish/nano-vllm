@@ -60,14 +60,14 @@ class ColumnParallelLinear(LinearBase):
         bias: bool = False,
     ):
         tp_size = dist.get_world_size()
-        super().__init__(input_size, divide(output_size, tp_size), bias, 0)
+        super().__init__(input_size, divide(output_size, tp_size), bias, 0) # 事先分片：将输出大小除以tp_size，得到每个GPU的输出大小
 
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
         param_data = param.data
         shard_size = param_data.size(self.tp_dim)
         start_idx = self.tp_rank * shard_size
-        loaded_weight = loaded_weight.narrow(self.tp_dim, start_idx, shard_size)
-        param_data.copy_(loaded_weight)
+        loaded_weight = loaded_weight.narrow(self.tp_dim, start_idx, shard_size) # 裁切加载的权重，拷贝到param中
+        param_data.copy_(loaded_weight) # ! 算输出向量的一段，比如算q k v的时候，算q的gpu就只算q，算k v的gpu就只算k v
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return F.linear(x, self.weight, self.bias)
@@ -82,15 +82,15 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
         bias: bool = False,
     ):
         self.output_sizes = output_sizes
-        super().__init__(input_size, sum(output_sizes), bias)
+        super().__init__(input_size, sum(output_sizes), bias) # 不事先分片，在forward中再分片
 
-    def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor, loaded_shard_id: int):
+    def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor, loaded_shard_id: int): # ! 这个和上边的ColumnParallelLinear没有本质区别，只不过显式地用shard划分了不同的线性层
         param_data = param.data
         shard_offset = sum(self.output_sizes[:loaded_shard_id]) // self.tp_size
         shard_size = self.output_sizes[loaded_shard_id] // self.tp_size
-        param_data = param_data.narrow(self.tp_dim, shard_offset, shard_size)
+        param_data = param_data.narrow(self.tp_dim, shard_offset, shard_size) # ! 这里和ColumnParallelLinear中的操作不同，除了裁切加载的权重以外，还对param_data进行裁切
         loaded_weight = loaded_weight.chunk(self.tp_size, self.tp_dim)[self.tp_rank]
-        param_data.copy_(loaded_weight)
+        param_data.copy_(loaded_weight) # 原地写入被narrow提取出来的部分
 
 
 class QKVParallelLinear(ColumnParallelLinear):
@@ -149,5 +149,5 @@ class RowParallelLinear(LinearBase):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         y = F.linear(x, self.weight, self.bias if self.tp_rank == 0 else None)
         if self.tp_size > 1:
-            dist.all_reduce(y)
+            dist.all_reduce(y) # ! 和列并行不同，这个行并行每个gpu都没有完整地算完一个像素的结果（但是整条都算了），所以需要all_reduce累加起来才是有效的结果
         return y

@@ -48,7 +48,27 @@ class RotaryEmbedding(nn.Module):
         return query, key
 
 
+def _rope_scaling_to_hashable(rope_scaling: dict | None) -> tuple | None:
+    """将rope_scaling字典转换为可哈希的元组，用于lru_cache"""
+    if rope_scaling is None:
+        return None
+    # 将字典转换为排序后的元组，使其可哈希
+    return tuple(sorted(rope_scaling.items()))
+
+
 @lru_cache(1)
+def _get_rope_cached(
+    head_size: int,
+    rotary_dim: int,
+    max_position: int,
+    base: float,
+    rope_scaling_hashable: tuple | None,
+):
+    """内部缓存函数，接受可哈希的rope_scaling"""
+    rotary_emb = RotaryEmbedding(head_size, rotary_dim, max_position, base)
+    return rotary_emb
+
+
 def get_rope(
     head_size: int,
     rotary_dim: int,
@@ -56,6 +76,8 @@ def get_rope(
     base: float,
     rope_scaling: dict | None = None,
 ):
-    assert rope_scaling is None
-    rotary_emb = RotaryEmbedding(head_size, rotary_dim, max_position, base)
-    return rotary_emb
+    """获取RotaryEmbedding实例，支持缓存"""
+    # 将字典转换为可哈希类型用于缓存
+    rope_scaling_hashable = _rope_scaling_to_hashable(rope_scaling)
+    # 目前rope_scaling参数在实现中未使用，但保留接口以支持未来扩展
+    return _get_rope_cached(head_size, rotary_dim, max_position, base, rope_scaling_hashable)
