@@ -56,15 +56,15 @@ class Attention(nn.Module):
         self.num_kv_heads = num_kv_heads
         self.k_cache = self.v_cache = torch.tensor([])
 
-    def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor):
+    def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor): # prefill 和 decode 都是 [N 16 128]
         context = get_context()
         k_cache, v_cache = self.k_cache, self.v_cache
-        if k_cache.numel() and v_cache.numel():
+        if k_cache.numel() and v_cache.numel(): # warmup阶段，kv cache为空，不存储 之后就分配了空间
             store_kvcache(k, v, k_cache, v_cache, context.slot_mapping)
         if context.is_prefill:
             if context.block_tables is not None:    # prefix cache
                 k, v = k_cache, v_cache
-            o = flash_attn_varlen_func(q, k, v,
+            o = flash_attn_varlen_func(q, k, v, # ! batch infer 通过cu_seqlens_q和cu_seqlens_k确定每个seq的查询和键的长度，进而确定causal mask
                                        max_seqlen_q=context.max_seqlen_q, cu_seqlens_q=context.cu_seqlens_q,
                                        max_seqlen_k=context.max_seqlen_k, cu_seqlens_k=context.cu_seqlens_k,
                                        softmax_scale=self.scale, causal=True, block_table=context.block_tables)
@@ -72,4 +72,4 @@ class Attention(nn.Module):
             o = flash_attn_with_kvcache(q.unsqueeze(1), k_cache, v_cache,
                                         cache_seqlens=context.context_lens, block_table=context.block_tables, 
                                         softmax_scale=self.scale, causal=True)
-        return o
+        return o # prefill [N 16 128] decode [N 1 16 128]

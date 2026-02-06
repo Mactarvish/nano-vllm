@@ -22,7 +22,7 @@ class Scheduler:
         self.waiting.append(seq)
 
     def schedule(self) -> tuple[list[Sequence], bool]:
-        # prefill
+        # prefill 只执行一次，后续都是decode
         scheduled_seqs = []
         num_seqs = 0
         num_batched_tokens = 0
@@ -40,7 +40,7 @@ class Scheduler:
         if scheduled_seqs: # 安排上新的序列了，那么当前就是prefill阶段
             return scheduled_seqs, True
 
-        # decode
+        # decode 每次每个seq解码一个新token
         while self.running and num_seqs < self.max_num_seqs:
             seq = self.running.popleft()
             while not self.block_manager.can_append(seq):

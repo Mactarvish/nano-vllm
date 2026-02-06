@@ -14,7 +14,7 @@ def main():
             "  --local-dir-use-symlinks False"
         )
     tokenizer = AutoTokenizer.from_pretrained(path, local_files_only=True)
-    llm = LLM(path, enforce_eager=False, tensor_parallel_size=1)
+    llm = LLM(path, enforce_eager=True, tensor_parallel_size=1)
 
     sampling_params = SamplingParams(temperature=0.6, max_tokens=256)
     prompts = [
